@@ -30,6 +30,11 @@
   #thumbs img { height:var(--thsize); border-radius:6px; cursor:pointer; opacity:.55; border:2px solid transparent; }
   #thumbs img.sel { opacity:1; border-color:#5B9BFF; }
   #stage { flex:1; position:relative; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+  .nav { position:absolute; top:50%; transform:translateY(-50%); width:46px; height:46px; border-radius:50%;
+         border:0; background:rgba(0,0,0,.45); color:#fff; font-size:24px; cursor:pointer; z-index:3; display:none; }
+  .nav:hover { background:rgba(13,78,162,.85); }
+  #prevBtn { left:12px; }
+  #nextBtn { right:12px; }
   #img { max-width:100%; max-height:100%; transform-origin:center center; cursor:grab; user-select:none; -webkit-user-drag:none; }
   #info { position:absolute; top:10px; left:12px; color:#fff; background:rgba(0,0,0,.55); padding:5px 12px; border-radius:14px; font-size:13px; }
   #hint { position:absolute; bottom:10px; right:12px; color:#aaa; font-size:12px; }
@@ -52,6 +57,8 @@
     <div id="thumbs"></div>
     <div id="stage">
       <div id="empty">로그인하면 스캔 폴더가 나타납니다</div>
+      <button id="prevBtn" class="nav">‹</button>
+      <button id="nextBtn" class="nav">›</button>
       <img id="img" style="display:none" alt="">
       <div id="info" style="display:none"></div>
       <div id="hint">←/→ 이동 · +/− 확대/축소 · 휠 줌 · 더블클릭 리셋</div>
@@ -87,7 +94,7 @@ const tokenClient = google.accounts.oauth2.initTokenClient({
   callback: r => {
     token = r.access_token;
     $("signin").style.display = "none";
-    $("setBtn").style.display = "";
+    $("setBtn").style.display = "inline-block";
     loadFolders();
   }
 });
@@ -205,6 +212,7 @@ async function show(i) {
   if (my !== showSeq) return;          // 그 사이 다른 사진으로 넘어갔으면 무시
   img.src = url;
   img.style.display = "";
+  $("prevBtn").style.display = $("nextBtn").style.display = "block";
   if (images[i + 1]) fileBlobUrl(images[i + 1].id);   // 다음 사진 미리 받기
   if (images[i - 1]) fileBlobUrl(images[i - 1].id);   // 이전 사진 미리 받기
 }
@@ -217,6 +225,8 @@ function prev() {
   if (iIdx > 0) show(iIdx - 1);
   else if (fIdx > 0) openFolder(fIdx - 1, -1);
 }
+$("prevBtn").onclick = prev;
+$("nextBtn").onclick = next;
 
 // ----- 확대/이동 -----
 function apply() { img.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`; }

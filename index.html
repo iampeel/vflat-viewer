@@ -8,16 +8,25 @@
   :root { --blue:#0D4EA2; }
   * { margin:0; box-sizing:border-box; }
   body { font-family:-apple-system,'Malgun Gothic',sans-serif; height:100vh; display:flex; flex-direction:column; background:#fff; }
-  header { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid #e3e6eb; }
-  header h1 { font-size:17px; color:var(--blue); }
-  #signin { margin-left:auto; background:var(--blue); color:#fff; border:0; border-radius:18px; padding:8px 18px; font-size:14px; cursor:pointer; }
+  header { display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid #e3e6eb; }
+  header h1 { font-size:17px; color:var(--blue); margin-right:auto; }
+  header button { border-radius:18px; padding:8px 18px; font-size:14px; cursor:pointer; }
+  #signin { background:var(--blue); color:#fff; border:0; }
+  #editBtn { background:#fff; color:var(--blue); border:1.5px solid var(--blue); display:none; }
+  body.edit #editBtn { background:var(--blue); color:#fff; }
   #main { flex:1; display:flex; min-height:0; }
   #folders { width:230px; overflow-y:auto; border-right:1px solid #e3e6eb; }
-  .folder { padding:11px 14px; cursor:pointer; font-size:14px; border-bottom:1px solid #f0f2f5; }
+  .folder { display:flex; align-items:center; padding:11px 14px; cursor:pointer; font-size:14px; border-bottom:1px solid #f0f2f5; }
+  .folder span { flex:1; }
   .folder:hover { background:#f1f3f6; }
   .folder.sel { background:var(--blue); color:#fff; }
-  .folder small { opacity:.65; }
-  #viewer { flex:1; position:relative; overflow:hidden; background:#111; display:flex; align-items:center; justify-content:center; }
+  .fdel { display:none; border:0; background:#e53935; color:#fff; border-radius:6px; padding:4px 8px; cursor:pointer; font-size:12px; }
+  body.edit .fdel { display:block; }
+  #viewer { flex:1; display:flex; flex-direction:column; background:#111; min-width:0; }
+  #thumbs { height:66px; display:none; gap:6px; overflow-x:auto; padding:6px 8px; background:#1c1c1c; }
+  #thumbs img { height:52px; border-radius:6px; cursor:pointer; opacity:.55; border:2px solid transparent; }
+  #thumbs img.sel { opacity:1; border-color:#5B9BFF; }
+  #stage { flex:1; position:relative; display:flex; align-items:center; justify-content:center; overflow:hidden; }
   #img { max-width:100%; max-height:100%; transform-origin:center center; cursor:grab; user-select:none; -webkit-user-drag:none; }
   #info { position:absolute; top:10px; left:12px; color:#fff; background:rgba(0,0,0,.55); padding:5px 12px; border-radius:14px; font-size:13px; }
   #hint { position:absolute; bottom:10px; right:12px; color:#aaa; font-size:12px; }
@@ -27,22 +36,26 @@
 <body>
 <header>
   <h1>📷 VFlat 뷰어</h1>
+  <button id="editBtn">수정</button>
   <button id="signin">구글 로그인</button>
 </header>
 <div id="main">
   <div id="folders"></div>
   <div id="viewer">
-    <div id="empty">로그인하면 스캔 폴더가 나타납니다</div>
-    <img id="img" style="display:none" alt="">
-    <div id="info" style="display:none"></div>
-    <div id="hint">←/→ 이동 · +/− 확대/축소 · 휠 줌 · 더블클릭 리셋</div>
+    <div id="thumbs"></div>
+    <div id="stage">
+      <div id="empty">로그인하면 스캔 폴더가 나타납니다</div>
+      <img id="img" style="display:none" alt="">
+      <div id="info" style="display:none"></div>
+      <div id="hint">←/→ 이동 · +/− 확대/축소 · 휠 줌 · 더블클릭 리셋</div>
+    </div>
   </div>
 </div>
 
 <script src="https://accounts.google.com/gsi/client"></script>
 <script>
 const CLIENT_ID = "9958547442-37a3cf1gmijnd2dkvkf8cdgoaf813440.apps.googleusercontent.com";
-const SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+const SCOPE = "https://www.googleapis.com/auth/drive";
 let token = null, folders = [], images = [], fIdx = -1, iIdx = -1;
 let scale = 1, tx = 0, ty = 0;
 
@@ -51,49 +64,98 @@ const img = $("img");
 
 const tokenClient = google.accounts.oauth2.initTokenClient({
   client_id: CLIENT_ID, scope: SCOPE,
-  callback: r => { token = r.access_token; $("signin").style.display = "none"; loadFolders(); }
+  callback: r => {
+    token = r.access_token;
+    $("signin").style.display = "none";
+    $("editBtn").style.display = "";
+    loadFolders();
+  }
 });
 $("signin").onclick = () => tokenClient.requestAccessToken();
+$("editBtn").onclick = () => document.body.classList.toggle("edit");
 
-async function api(path) {
-  const r = await fetch("https://www.googleapis.com/drive/v3/" + path,
-    { headers: { Authorization: "Bearer " + token } });
+async function api(path, method, body) {
+  const opt = { method: method || "GET", headers: { Authorization: "Bearer " + token } };
+  if (body) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const r = await fetch("https://www.googleapis.com/drive/v3/" + path, opt);
   if (!r.ok) throw new Error("API 오류 " + r.status);
-  return r.json();
+  return r.status === 204 ? null : r.json();
 }
 
-async function loadFolders() {
+async function loadFolders(keepIdx) {
   $("empty").textContent = "불러오는 중...";
   const q1 = encodeURIComponent("name='VFlatScans' and mimeType='application/vnd.google-apps.folder' and trashed=false");
   const root = (await api(`files?q=${q1}&fields=files(id)`)).files[0];
   if (!root) { $("empty").textContent = "드라이브에 VFlatScans 폴더가 없습니다"; return; }
   const q2 = encodeURIComponent(`'${root.id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
-  folders = (await api(`files?q=${q2}&orderBy=createdTime desc&pageSize=200&fields=files(id,name,createdTime)`)).files;
+  folders = (await api(`files?q=${q2}&orderBy=createdTime desc&pageSize=200&fields=files(id,name)`)).files;
+  renderFolders();
+  if (folders.length) openFolder(Math.min(keepIdx || 0, folders.length - 1), 0);
+  else {
+    images = []; fIdx = -1;
+    $("thumbs").style.display = "none";
+    img.style.display = "none"; $("info").style.display = "none";
+    $("empty").style.display = ""; $("empty").textContent = "아직 전송된 스캔이 없습니다";
+  }
+}
+
+function renderFolders() {
   const box = $("folders");
   box.innerHTML = "";
   folders.forEach((f, i) => {
     const d = document.createElement("div");
     d.className = "folder";
-    d.textContent = f.name;
+    const s = document.createElement("span");
+    s.textContent = f.name;
+    const del = document.createElement("button");
+    del.className = "fdel";
+    del.textContent = "삭제";
+    del.onclick = ev => trashFolder(i, ev);
+    d.append(s, del);
     d.onclick = () => openFolder(i, 0);
     box.appendChild(d);
   });
-  if (folders.length) openFolder(0, 0);
-  else $("empty").textContent = "아직 전송된 스캔이 없습니다";
+}
+
+async function trashFolder(i, ev) {
+  ev.stopPropagation();
+  if (!confirm(`"${folders[i].name}" 폴더를 삭제할까요?\n(드라이브 휴지통으로 이동, 30일 내 복구 가능)`)) return;
+  await api("files/" + folders[i].id, "PATCH", { trashed: true });
+  loadFolders(fIdx === i ? i : (fIdx > i ? fIdx - 1 : fIdx));
 }
 
 async function openFolder(i, startIdx) {
   fIdx = i;
   [...$("folders").children].forEach((el, k) => el.classList.toggle("sel", k === i));
   const q = encodeURIComponent(`'${folders[i].id}' in parents and trashed=false and mimeType contains 'image/'`);
-  images = (await api(`files?q=${q}&orderBy=name&pageSize=500&fields=files(id,name)`)).files;
-  if (!images.length) { $("empty").style.display = ""; $("empty").textContent = "빈 폴더"; img.style.display = "none"; return; }
+  images = (await api(`files?q=${q}&orderBy=name&pageSize=500&fields=files(id,name,thumbnailLink)`)).files;
+  renderThumbs();
+  if (!images.length) {
+    $("empty").style.display = ""; $("empty").textContent = "빈 폴더";
+    img.style.display = "none"; $("info").style.display = "none";
+    return;
+  }
   show(startIdx < 0 ? images.length - 1 : startIdx);
+}
+
+function renderThumbs() {
+  const t = $("thumbs");
+  t.innerHTML = "";
+  t.style.display = images.length ? "flex" : "none";
+  images.forEach((f, i) => {
+    const im = document.createElement("img");
+    im.src = f.thumbnailLink || "";
+    im.onerror = () => im.style.display = "none";
+    im.onclick = () => show(i);
+    t.appendChild(im);
+  });
 }
 
 async function show(i) {
   iIdx = i;
   resetView();
+  [...$("thumbs").children].forEach((el, k) => el.classList.toggle("sel", k === i));
+  $("thumbs").children[i]?.scrollIntoView({ inline: "nearest", block: "nearest" });
   $("empty").style.display = "none";
   $("info").style.display = "";
   $("info").textContent = `${folders[fIdx].name}  ·  ${i + 1}/${images.length}`;
@@ -128,7 +190,7 @@ document.addEventListener("keydown", e => {
   else if (e.key === "0") resetView();
 });
 
-$("viewer").addEventListener("wheel", e => {
+$("stage").addEventListener("wheel", e => {
   e.preventDefault();
   zoom(e.deltaY < 0 ? 1.15 : 0.87);
 }, { passive: false });

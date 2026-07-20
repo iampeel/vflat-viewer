@@ -1,8 +1,9 @@
 const CLIENT_ID = "9958547442-37a3cf1gmijnd2dkvkf8cdgoaf813440.apps.googleusercontent.com";
 const SCOPE = "https://www.googleapis.com/auth/drive";
 let token = null, folders = [], images = [], fIdx = -1, iIdx = -1;
-let scale = 1, tx = 0, ty = 0, showSeq = 0;
+let scale = 1, tx = 0, ty = 0, rot = 0, showSeq = 0;
 const blobCache = new Map();
+const rotStore = JSON.parse(localStorage.getItem("rot") || "{}");   // 사진별 회전 기억
 
 const $ = id => document.getElementById(id);
 const img = $("img");
@@ -17,6 +18,9 @@ $("thSize").oninput = e => {
 };
 $("delMode").onchange = e => document.body.classList.toggle("edit", e.target.checked);
 $("setBtn").onclick = () => document.body.classList.toggle("panel");
+$("refreshBtn").onclick = () => quietRefresh(true);
+$("autoRefresh").checked = localStorage.getItem("autoref") !== "0";
+$("autoRefresh").onchange = e => localStorage.setItem("autoref", e.target.checked ? "1" : "0");
 $("autoLogin").checked = localStorage.getItem("auto") !== "0";
 $("autoLogin").onchange = e => localStorage.setItem("auto", e.target.checked ? "1" : "0");
 
@@ -38,6 +42,7 @@ $("signin").onclick = () => tokenClient.requestAccessToken();
 function start() {
   $("signin").style.display = "none";
   $("setBtn").style.display = "inline-block";
+  $("refreshBtn").style.display = "inline-block";
   loadFolders();
 }
 
@@ -118,6 +123,51 @@ async function trashFolder(i, ev) {
   loadFolders(fIdx === i ? i : (fIdx > i ? fIdx - 1 : fIdx));
 }
 
+/** 현재 보는 사진/확대상태를 건드리지 않고 목록만 조용히 갱신 */
+async function quietRefresh(manual) {
+  if (!token) return;
+  const btn = $("refreshBtn");
+  if (manual) btn.textContent = "🔄 갱신 중...";
+  try {
+    const q1 = encodeURIComponent("name='VFlatScans' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+    const rootRes = await api(`files?q=${q1}&fields=files(id)`);
+    const root = rootRes.files[0];
+    if (!root) return;
+    const q2 = encodeURIComponent(`'${root.id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    const fresh = (await api(`files?q=${q2}&orderBy=createdTime desc&pageSize=200&fields=files(id,name)`)).files;
+
+    // 폴더 목록이 달라졌으면: 현재 폴더 id를 유지하며 다시 그림
+    const curId = folders[fIdx]?.id;
+    const changed = fresh.length !== folders.length ||
+      fresh.some((f, i) => f.id !== folders[i]?.id);
+    if (changed) {
+      folders = fresh;
+      renderFolders();
+      fIdx = Math.max(0, folders.findIndex(f => f.id === curId));
+      [...$("folders").children].forEach((el, k) => el.classList.toggle("sel", k === fIdx));
+    }
+
+    // 현재 폴더 안의 사진 개수 갱신 (보던 사진은 그대로 유지)
+    if (folders[fIdx]) {
+      const q = encodeURIComponent(`'${folders[fIdx].id}' in parents and trashed=false and mimeType contains 'image/'`);
+      const freshImgs = (await api(`files?q=${q}&orderBy=name&pageSize=500&fields=files(id,name,thumbnailLink)`)).files;
+      if (freshImgs.length !== images.length) {
+        const curImgId = images[iIdx]?.id;
+        images = freshImgs;
+        renderThumbs();
+        iIdx = Math.max(0, images.findIndex(im => im.id === curImgId));
+        [...$("thumbs").children].forEach((el, k) => el.classList.toggle("sel", k === iIdx));
+        $("info").textContent = `${folders[fIdx].name}  ·  ${iIdx + 1}/${images.length}`;
+      }
+    }
+  } catch (e) { /* 조용히 무시 */ }
+  finally { if (manual) btn.textContent = "🔄 새로고침"; }
+}
+
+setInterval(() => {
+  if (token && $("autoRefresh").checked) quietRefresh(false);
+}, 30000);
+
 // ----- 사진 -----
 async function openFolder(i, startIdx) {
   fIdx = i;
@@ -158,6 +208,7 @@ async function loadThumb(f, im) {
 async function show(i) {
   const my = ++showSeq;
   iIdx = i;
+  rot = rotStore[images[i]?.id] || 0;   // 이 사진에 저장된 회전 복원
   resetView();
   [...$("thumbs").children].forEach((el, k) => el.classList.toggle("sel", k === i));
   $("thumbs").children[i]?.scrollIntoView({ inline: "nearest", block: "nearest" });
@@ -169,6 +220,7 @@ async function show(i) {
   img.src = url;
   img.style.display = "";
   $("prevBtn").style.display = $("nextBtn").style.display = "block";
+  $("rotbar").style.display = "flex";
   if (images[i + 1]) fileBlobUrl(images[i + 1].id);
   if (images[i - 1]) fileBlobUrl(images[i - 1].id);
 }
@@ -184,10 +236,22 @@ function prev() {
 $("prevBtn").onclick = prev;
 $("nextBtn").onclick = next;
 
-// ----- 확대/이동 -----
-function apply() { img.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`; }
+// ----- 확대/이동/회전 -----
+function apply() { img.style.transform = `translate(${tx}px,${ty}px) rotate(${rot}deg) scale(${scale})`; }
 function resetView() { scale = 1; tx = ty = 0; apply(); }
 function zoom(f) { scale = Math.min(12, Math.max(0.2, scale * f)); apply(); }
+
+function rotate(delta) {
+  rot = (rot + delta + 360) % 360;
+  const id = images[iIdx]?.id;
+  if (id) {
+    if (rot === 0) delete rotStore[id]; else rotStore[id] = rot;
+    localStorage.setItem("rot", JSON.stringify(rotStore));
+  }
+  apply();
+}
+$("rotLeft").onclick = () => rotate(-90);
+$("rotRight").onclick = () => rotate(90);
 
 document.addEventListener("keydown", e => {
   if (!images.length) return;
@@ -196,6 +260,8 @@ document.addEventListener("keydown", e => {
   else if (e.key === "+" || e.key === "=") zoom(1.25);
   else if (e.key === "-" || e.key === "_") zoom(0.8);
   else if (e.key === "0") resetView();
+  else if (e.key === "[" ) rotate(-90);
+  else if (e.key === "]" ) rotate(90);
 });
 
 $("stage").addEventListener("wheel", e => {

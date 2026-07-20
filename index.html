@@ -35,6 +35,10 @@
   .nav:hover { background:rgba(13,78,162,.85); }
   #prevBtn { left:12px; }
   #nextBtn { right:12px; }
+  #rotbar { position:absolute; bottom:10px; left:12px; display:none; gap:8px; z-index:3; }
+  #rotbar button { width:40px; height:40px; border-radius:50%; border:0; background:rgba(0,0,0,.5);
+                   color:#fff; font-size:19px; cursor:pointer; }
+  #rotbar button:hover { background:rgba(13,78,162,.85); }
   #img { max-width:100%; max-height:100%; transform-origin:center center; cursor:grab; user-select:none; -webkit-user-drag:none; }
   #info { position:absolute; top:10px; left:12px; color:#fff; background:rgba(0,0,0,.55); padding:5px 12px; border-radius:14px; font-size:13px; }
   #hint { position:absolute; bottom:10px; right:12px; color:#aaa; font-size:12px; }
@@ -44,11 +48,13 @@
 <body>
 <header>
   <h1>📷 VFlat 뷰어</h1>
+  <button id="refreshBtn" style="display:none">🔄 새로고침</button>
   <button id="setBtn">⚙ 설정</button>
   <button id="signin">구글 로그인</button>
   <div id="panel">
     <label>썸네일 크기<br><input type="range" id="thSize" min="40" max="130" step="2"></label>
     <label><input type="checkbox" id="autoLogin" checked> 자동 로그인</label>
+    <label><input type="checkbox" id="autoRefresh" checked> 자동 갱신 (30초)</label>
     <label><input type="checkbox" id="delMode"> 폴더 삭제 모드</label>
   </div>
 </header>
@@ -62,7 +68,11 @@
       <button id="nextBtn" class="nav">›</button>
       <img id="img" style="display:none" alt="">
       <div id="info" style="display:none"></div>
-      <div id="hint">←/→ 이동 · +/− 확대/축소 · 휠 줌 · 더블클릭 리셋</div>
+      <div id="rotbar">
+        <button id="rotLeft" title="왼쪽으로 회전 ([)">↺</button>
+        <button id="rotRight" title="오른쪽으로 회전 (])">↻</button>
+      </div>
+      <div id="hint">←/→ 이동 · +/− 줌 · [ ] 회전 · 더블클릭 리셋</div>
     </div>
   </div>
 </div>

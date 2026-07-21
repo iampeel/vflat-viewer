@@ -109,6 +109,23 @@ async function fileBlobUrl(id) {
   return url;
 }
 
+/** 빠른 표시용: 구글이 만든 큰 압축본(s2048)을 사용 — 원본보다 훨씬 빠름 */
+async function displayUrl(f) {
+  const key = "disp_" + f.id;
+  if (blobCache.has(key)) return blobCache.get(key);
+  if (!f.thumbnailLink) return fileBlobUrl(f.id);
+  const big = f.thumbnailLink.replace(/=s\d+.*$/, "=s2048");
+  try {
+    const r = await fetch(big, { headers: { Authorization: "Bearer " + token } });
+    if (!r.ok) throw 0;
+    const url = URL.createObjectURL(await r.blob());
+    blobCache.set(key, url);
+    return url;
+  } catch (e) {
+    return fileBlobUrl(f.id);   // 실패 시 원본
+  }
+}
+
 // ----- 폴더 -----
 async function loadFolders(keepIdx) {
   $("empty").textContent = "불러오는 중...";
@@ -244,14 +261,17 @@ async function show(i) {
   $("empty").style.display = "none";
   $("info").style.display = "";
   $("info").textContent = `${folders[fIdx].name}  ·  ${i + 1}/${images.length}`;
-  const url = await fileBlobUrl(images[i].id);
+  const url = await displayUrl(images[i]);
   if (my !== showSeq) return;
   img.src = url;
   img.style.display = "";
   $("prevBtn").style.display = $("nextBtn").style.display = "block";
   $("rotbar").style.display = "flex";
-  if (images[i + 1]) fileBlobUrl(images[i + 1].id);
-  if (images[i - 1]) fileBlobUrl(images[i - 1].id);
+  // 앞뒤 3장씩 미리 받기 (빠른 넘김)
+  for (let d = 1; d <= 3; d++) {
+    if (images[i + d]) displayUrl(images[i + d]);
+    if (images[i - d]) displayUrl(images[i - d]);
+  }
 }
 
 function next() {

@@ -25,18 +25,35 @@ $("autoLogin").checked = localStorage.getItem("auto") !== "0";
 $("autoLogin").onchange = e => localStorage.setItem("auto", e.target.checked ? "1" : "0");
 
 // ----- 로그인 -----
+let started = false;
+let refreshTimer = null;
+
+const tokenClientCallback = r => {
+  if (!r.access_token) return;
+  token = r.access_token;
+  const exp = Date.now() + (r.expires_in - 120) * 1000;
+  localStorage.setItem("tok", JSON.stringify({ t: r.access_token, exp }));
+  localStorage.setItem("hadLogin", "1");
+  scheduleRefresh(exp);
+  if (!started) { started = true; start(); }
+};
+
 const tokenClient = google.accounts.oauth2.initTokenClient({
-  client_id: CLIENT_ID, scope: SCOPE,
-  callback: r => {
-    token = r.access_token;
-    localStorage.setItem("tok", JSON.stringify({
-      t: r.access_token,
-      exp: Date.now() + (r.expires_in - 120) * 1000
-    }));
-    localStorage.setItem("hadLogin", "1");
-    start();
-  }
+  client_id: CLIENT_ID, scope: SCOPE, callback: tokenClientCallback
 });
+
+// 만료 3분 전에 미리 조용히 재발급 예약
+function scheduleRefresh(exp) {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  const wait = Math.max(10000, exp - Date.now() - 180000);
+  refreshTimer = setTimeout(silentAuth, wait);
+}
+
+function silentAuth() {
+  if (localStorage.getItem("auto") === "0") return;
+  try { tokenClient.requestAccessToken({ prompt: "" }); } catch (e) {}
+}
+
 $("signin").onclick = () => tokenClient.requestAccessToken();
 
 function start() {
@@ -54,13 +71,25 @@ function needLogin(msg) {
   $("empty").textContent = msg || "로그인이 필요합니다";
 }
 
-// 자동 로그인: 저장된 토큰이 살아있으면 즉시 사용, 아니면 조용히 재발급 시도
+// 자동 로그인: 저장된 토큰이 살아있으면 즉시 사용 + 갱신 예약, 아니면 조용히 재발급
 (function autoLogin() {
   if (localStorage.getItem("auto") === "0") return;
   const saved = JSON.parse(localStorage.getItem("tok") || "null");
-  if (saved && saved.exp > Date.now()) { token = saved.t; start(); }
-  else if (localStorage.getItem("hadLogin")) tokenClient.requestAccessToken({ prompt: "" });
+  if (saved && saved.exp > Date.now()) {
+    token = saved.t; started = true; start(); scheduleRefresh(saved.exp);
+  } else if (localStorage.getItem("hadLogin")) {
+    silentAuth();
+  }
 })();
+
+// 안전장치: 1분마다 만료 임박이면 갱신
+setInterval(() => {
+  if (localStorage.getItem("auto") === "0") return;
+  const saved = JSON.parse(localStorage.getItem("tok") || "null");
+  if (saved && saved.exp - Date.now() < 180000 && localStorage.getItem("hadLogin")) {
+    silentAuth();
+  }
+}, 60000);
 
 async function api(path, method, body) {
   const opt = { method: method || "GET", headers: { Authorization: "Bearer " + token } };

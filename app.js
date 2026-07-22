@@ -1,11 +1,8 @@
-const CLIENT_ID = "9958547442-37a3cf1gmijnd2dkvkf8cdgoaf813440.apps.googleusercontent.com";
-const SCOPE = "https://www.googleapis.com/auth/drive";
-let token = null, folders = [], images = [], fIdx = -1, iIdx = -1;
+// ===== 뷰어 화면 (로그인은 auth.js) =====
+let folders = [], images = [], fIdx = -1, iIdx = -1;
 let scale = 1, tx = 0, ty = 0, rot = 0, showSeq = 0;
 const blobCache = new Map();
 const rotStore = JSON.parse(localStorage.getItem("rot") || "{}");   // 사진별 회전 기억
-
-const $ = id => document.getElementById(id);
 const img = $("img");
 
 // ----- 설정 -----
@@ -24,82 +21,6 @@ $("autoRefresh").onchange = e => localStorage.setItem("autoref", e.target.checke
 $("autoLogin").checked = localStorage.getItem("auto") !== "0";
 $("autoLogin").onchange = e => localStorage.setItem("auto", e.target.checked ? "1" : "0");
 
-// ----- 로그인 -----
-let started = false;
-let refreshTimer = null;
-
-const tokenClientCallback = r => {
-  if (!r.access_token) return;
-  token = r.access_token;
-  const exp = Date.now() + (r.expires_in - 120) * 1000;
-  localStorage.setItem("tok", JSON.stringify({ t: r.access_token, exp }));
-  localStorage.setItem("hadLogin", "1");
-  scheduleRefresh(exp);
-  if (!started) { started = true; start(); }
-};
-
-const tokenClient = google.accounts.oauth2.initTokenClient({
-  client_id: CLIENT_ID, scope: SCOPE, callback: tokenClientCallback
-});
-
-// 만료 3분 전에 미리 조용히 재발급 예약
-function scheduleRefresh(exp) {
-  if (refreshTimer) clearTimeout(refreshTimer);
-  const wait = Math.max(10000, exp - Date.now() - 180000);
-  refreshTimer = setTimeout(silentAuth, wait);
-}
-
-function silentAuth() {
-  if (localStorage.getItem("auto") === "0") return;
-  try { tokenClient.requestAccessToken({ prompt: "" }); } catch (e) {}
-}
-
-$("signin").onclick = () => tokenClient.requestAccessToken();
-
-function start() {
-  $("signin").style.display = "none";
-  $("setBtn").style.display = "inline-block";
-  $("refreshBtn").style.display = "inline-block";
-  loadFolders();
-}
-
-function needLogin(msg) {
-  token = null;
-  localStorage.removeItem("tok");
-  $("signin").style.display = "";
-  $("empty").style.display = "";
-  $("empty").textContent = msg || "로그인이 필요합니다";
-}
-
-// 자동 로그인: 저장된 토큰이 살아있으면 즉시 사용 + 갱신 예약, 아니면 조용히 재발급
-(function autoLogin() {
-  if (localStorage.getItem("auto") === "0") return;
-  const saved = JSON.parse(localStorage.getItem("tok") || "null");
-  if (saved && saved.exp > Date.now()) {
-    token = saved.t; started = true; start(); scheduleRefresh(saved.exp);
-  } else if (localStorage.getItem("hadLogin")) {
-    silentAuth();
-  }
-})();
-
-// 안전장치: 1분마다 만료 임박이면 갱신
-setInterval(() => {
-  if (localStorage.getItem("auto") === "0") return;
-  const saved = JSON.parse(localStorage.getItem("tok") || "null");
-  if (saved && saved.exp - Date.now() < 180000 && localStorage.getItem("hadLogin")) {
-    silentAuth();
-  }
-}, 60000);
-
-async function api(path, method, body) {
-  const opt = { method: method || "GET", headers: { Authorization: "Bearer " + token } };
-  if (body) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
-  const r = await fetch("https://www.googleapis.com/drive/v3/" + path, opt);
-  if (r.status === 401) { needLogin("로그인이 만료됐어요 — 다시 로그인해주세요"); throw new Error("401"); }
-  if (!r.ok) throw new Error("API 오류 " + r.status);
-  return r.status === 204 ? null : r.json();
-}
-
 async function fileBlobUrl(id) {
   if (blobCache.has(id)) return blobCache.get(id);
   const r = await fetch(`https://www.googleapis.com/drive/v3/files/${id}?alt=media`,
@@ -109,31 +30,7 @@ async function fileBlobUrl(id) {
   return url;
 }
 
-// ----- 영구 캐시 (IndexedDB): 한 번 받은 사진은 이 컴퓨터에 저장 -----
-let idb = null;
-const idbReady = new Promise(res => {
-  try {
-    const req = indexedDB.open("vflat", 1);
-    req.onupgradeneeded = () => req.result.createObjectStore("imgs");
-    req.onsuccess = () => { idb = req.result; res(); };
-    req.onerror = () => res();
-  } catch (e) { res(); }
-});
-function idbGet(key) {
-  return new Promise(r => {
-    if (!idb) return r(null);
-    try {
-      const t = idb.transaction("imgs").objectStore("imgs").get(key);
-      t.onsuccess = () => r(t.result || null);
-      t.onerror = () => r(null);
-    } catch (e) { r(null); }
-  });
-}
-function idbPut(key, blob) {
-  try { idb?.transaction("imgs", "readwrite").objectStore("imgs").put(blob, key); } catch (e) {}
-}
-
-/** 빠른 표시용: 영구 캐시 → 없으면 구글 압축본(s2048) 다운로드 후 저장 */
+/** 빠른 표시용: 영구 캐시(auth.js의 idb) → 없으면 구글 압축본(s2048) 다운로드 후 저장 */
 async function displayUrl(f) {
   const key = "disp_" + f.id;
   if (blobCache.has(key)) return blobCache.get(key);
@@ -228,13 +125,11 @@ async function quietRefresh(manual) {
   if (manual) btn.textContent = "🔄 갱신 중...";
   try {
     const q1 = encodeURIComponent("name='VFlatScans' and mimeType='application/vnd.google-apps.folder' and trashed=false");
-    const rootRes = await api(`files?q=${q1}&fields=files(id)`);
-    const root = rootRes.files[0];
+    const root = (await api(`files?q=${q1}&fields=files(id)`)).files[0];
     if (!root) return;
     const q2 = encodeURIComponent(`'${root.id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
     const fresh = (await api(`files?q=${q2}&orderBy=createdTime desc&pageSize=200&fields=files(id,name)`)).files;
 
-    // 폴더 목록이 달라졌으면: 현재 폴더 id를 유지하며 다시 그림
     const curId = folders[fIdx]?.id;
     const changed = fresh.length !== folders.length ||
       fresh.some((f, i) => f.id !== folders[i]?.id);
@@ -245,7 +140,6 @@ async function quietRefresh(manual) {
       [...$("folders").children].forEach((el, k) => el.classList.toggle("sel", k === fIdx));
     }
 
-    // 현재 폴더 안의 사진 개수 갱신 (보던 사진은 그대로 유지)
     if (folders[fIdx]) {
       const q = encodeURIComponent(`'${folders[fIdx].id}' in parents and trashed=false and mimeType contains 'image/'`);
       const freshImgs = (await api(`files?q=${q}&orderBy=name&pageSize=500&fields=files(id,name,thumbnailLink)`)).files;
@@ -340,8 +234,7 @@ async function show(i) {
   img.style.display = "";
   $("prevBtn").style.display = $("nextBtn").style.display = "block";
   $("rotbar").style.display = "flex";
-  // 앞뒤 3장씩 미리 받기 (빠른 넘김)
-  for (let d = 1; d <= 3; d++) {
+  for (let d = 1; d <= 3; d++) {           // 앞뒤 3장씩 미리 받기
     if (images[i + d]) displayUrl(images[i + d]);
     if (images[i - d]) displayUrl(images[i - d]);
   }
@@ -382,8 +275,8 @@ document.addEventListener("keydown", e => {
   else if (e.key === "+" || e.key === "=") zoom(1.25);
   else if (e.key === "-" || e.key === "_") zoom(0.8);
   else if (e.key === "0") resetView();
-  else if (e.key === "[" ) rotate(-90);
-  else if (e.key === "]" ) rotate(90);
+  else if (e.key === "[") rotate(-90);
+  else if (e.key === "]") rotate(90);
 });
 
 $("stage").addEventListener("wheel", e => {

@@ -109,16 +109,49 @@ async function fileBlobUrl(id) {
   return url;
 }
 
-/** 빠른 표시용: 구글이 만든 큰 압축본(s2048)을 사용 — 원본보다 훨씬 빠름 */
+// ----- 영구 캐시 (IndexedDB): 한 번 받은 사진은 이 컴퓨터에 저장 -----
+let idb = null;
+const idbReady = new Promise(res => {
+  try {
+    const req = indexedDB.open("vflat", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("imgs");
+    req.onsuccess = () => { idb = req.result; res(); };
+    req.onerror = () => res();
+  } catch (e) { res(); }
+});
+function idbGet(key) {
+  return new Promise(r => {
+    if (!idb) return r(null);
+    try {
+      const t = idb.transaction("imgs").objectStore("imgs").get(key);
+      t.onsuccess = () => r(t.result || null);
+      t.onerror = () => r(null);
+    } catch (e) { r(null); }
+  });
+}
+function idbPut(key, blob) {
+  try { idb?.transaction("imgs", "readwrite").objectStore("imgs").put(blob, key); } catch (e) {}
+}
+
+/** 빠른 표시용: 영구 캐시 → 없으면 구글 압축본(s2048) 다운로드 후 저장 */
 async function displayUrl(f) {
   const key = "disp_" + f.id;
   if (blobCache.has(key)) return blobCache.get(key);
+  await idbReady;
+  const saved = await idbGet(key);
+  if (saved) {
+    const url = URL.createObjectURL(saved);
+    blobCache.set(key, url);
+    return url;
+  }
   if (!f.thumbnailLink) return fileBlobUrl(f.id);
   const big = f.thumbnailLink.replace(/=s\d+.*$/, "=s2048");
   try {
     const r = await fetch(big, { headers: { Authorization: "Bearer " + token } });
     if (!r.ok) throw 0;
-    const url = URL.createObjectURL(await r.blob());
+    const blob = await r.blob();
+    idbPut(key, blob);   // 이 컴퓨터에 영구 저장
+    const url = URL.createObjectURL(blob);
     blobCache.set(key, url);
     return url;
   } catch (e) {
@@ -135,8 +168,10 @@ async function loadFolders(keepIdx) {
   const q2 = encodeURIComponent(`'${root.id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
   folders = (await api(`files?q=${q2}&orderBy=createdTime desc&pageSize=200&fields=files(id,name)`)).files;
   renderFolders();
-  if (folders.length) openFolder(Math.min(keepIdx || 0, folders.length - 1), 0);
-  else {
+  if (folders.length) {
+    openFolder(Math.min(keepIdx || 0, folders.length - 1), 0);
+    prefetchFolders();   // 최근 폴더들 미리 준비
+  } else {
     images = []; fIdx = -1;
     $("thumbs").style.display = "none";
     img.style.display = "none"; $("info").style.display = "none";
@@ -214,6 +249,7 @@ async function quietRefresh(manual) {
     if (folders[fIdx]) {
       const q = encodeURIComponent(`'${folders[fIdx].id}' in parents and trashed=false and mimeType contains 'image/'`);
       const freshImgs = (await api(`files?q=${q}&orderBy=name&pageSize=500&fields=files(id,name,thumbnailLink)`)).files;
+      folderCache.set(folders[fIdx].id, freshImgs);
       if (freshImgs.length !== images.length) {
         const curImgId = images[iIdx]?.id;
         images = freshImgs;
@@ -232,11 +268,20 @@ setInterval(() => {
 }, 30000);
 
 // ----- 사진 -----
+const folderCache = new Map();   // 폴더 id → 사진 목록 (한 번 조회하면 기억)
+
+async function listImages(folderId) {
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed=false and mimeType contains 'image/'`);
+  const files = (await api(`files?q=${q}&orderBy=name&pageSize=500&fields=files(id,name,thumbnailLink)`)).files;
+  folderCache.set(folderId, files);
+  return files;
+}
+
 async function openFolder(i, startIdx) {
   fIdx = i;
   [...$("folders").children].forEach((el, k) => el.classList.toggle("sel", k === i));
-  const q = encodeURIComponent(`'${folders[i].id}' in parents and trashed=false and mimeType contains 'image/'`);
-  images = (await api(`files?q=${q}&orderBy=name&pageSize=500&fields=files(id,name,thumbnailLink)`)).files;
+  const id = folders[i].id;
+  images = folderCache.get(id) || await listImages(id);
   renderThumbs();
   if (!images.length) {
     $("empty").style.display = ""; $("empty").textContent = "빈 폴더";
@@ -244,6 +289,17 @@ async function openFolder(i, startIdx) {
     return;
   }
   show(startIdx < 0 ? images.length - 1 : startIdx);
+  images.forEach(f => displayUrl(f));   // 이 폴더 전체를 뒤에서 미리 받기
+}
+
+/** 로그인 직후: 최근 폴더들의 목록 + 첫 장을 미리 받아둠 */
+async function prefetchFolders() {
+  for (const f of folders.slice(0, 12)) {
+    try {
+      const files = folderCache.get(f.id) || await listImages(f.id);
+      if (files[0]) displayUrl(files[0]);
+    } catch (e) { /* 무시 */ }
+  }
 }
 
 function renderThumbs() {

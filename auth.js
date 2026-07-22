@@ -16,9 +16,26 @@ const tokenClientCallback = r => {
   localStorage.setItem("hadLogin", "1");
   scheduleRefresh(exp);
   $("signin").style.display = "none";
+  saveAccountHint();   // 어느 계정인지 기억 (다음 갱신 때 계정 선택 창 안 뜨게)
   if (!started) { started = true; start(); }
   else if (!folders.length) loadFolders();
 };
+
+/** 로그인한 계정 이메일을 기억해뒀다가 갱신 때 힌트로 사용 */
+async function saveAccountHint() {
+  if (localStorage.getItem("hint")) return;
+  try {
+    const r = await fetch("https://www.googleapis.com/drive/v3/about?fields=user",
+      { headers: { Authorization: "Bearer " + token } });
+    const j = await r.json();
+    if (j.user?.emailAddress) localStorage.setItem("hint", j.user.emailAddress);
+  } catch (e) {}
+}
+
+function authOpts() {
+  const hint = localStorage.getItem("hint");
+  return hint ? { prompt: "", login_hint: hint } : { prompt: "" };
+}
 
 const tokenClient = google.accounts.oauth2.initTokenClient({
   client_id: CLIENT_ID, scope: SCOPE, callback: tokenClientCallback
@@ -31,7 +48,7 @@ function scheduleRefresh(exp) {
 
 function silentAuth() {
   if (localStorage.getItem("auto") === "0") return;
-  try { tokenClient.requestAccessToken({ prompt: "" }); } catch (e) {}
+  try { tokenClient.requestAccessToken(authOpts()); } catch (e) {}
 }
 
 /**
@@ -46,7 +63,7 @@ function maybeRenew() {
   if (!saved || saved.exp - Date.now() < 15 * 60000) {
     renewing = true;
     setTimeout(() => { renewing = false; }, 15000);
-    try { tokenClient.requestAccessToken({ prompt: "" }); } catch (e) {}
+    try { tokenClient.requestAccessToken(authOpts()); } catch (e) {}
   }
 }
 ["pointerdown", "keydown"].forEach(ev =>

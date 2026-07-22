@@ -25,6 +25,9 @@
   .folder.sel { background:var(--blue); color:#fff; }
   .fdel { display:none; border:0; background:#e53935; color:#fff; border-radius:6px; padding:4px 8px; cursor:pointer; font-size:12px; }
   body.edit .fdel { display:block; }
+  .fedit { border:0; background:transparent; cursor:pointer; font-size:14px; opacity:.4; padding:2px 4px; }
+  .fedit:hover { opacity:1; }
+  .folder.sel .fedit { opacity:.85; }
   #viewer { flex:1; display:flex; flex-direction:column; background:#111; min-width:0; }
   #thumbs { height:calc(var(--thsize) + 14px); display:none; gap:6px; overflow-x:auto; padding:6px 8px; background:#1c1c1c; flex-shrink:0; }
   #thumbs img { height:var(--thsize); border-radius:6px; cursor:pointer; opacity:.55; border:2px solid transparent; }

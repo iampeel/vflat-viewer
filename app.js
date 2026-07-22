@@ -152,14 +152,31 @@ function renderFolders() {
     d.className = "folder";
     const s = document.createElement("span");
     s.textContent = f.name;
+    const rename = document.createElement("button");
+    rename.className = "fedit";
+    rename.textContent = "✏️";
+    rename.title = "이름 변경";
+    rename.onclick = ev => renameFolder(i, ev);
     const del = document.createElement("button");
     del.className = "fdel";
     del.textContent = "삭제";
     del.onclick = ev => trashFolder(i, ev);
-    d.append(s, del);
+    d.append(s, rename, del);
     d.onclick = () => openFolder(i, 0);
     box.appendChild(d);
   });
+}
+
+async function renameFolder(i, ev) {
+  ev.stopPropagation();
+  const cur = folders[i].name;
+  const name = prompt("폴더 이름 변경:", cur);
+  if (!name || name.trim() === "" || name === cur) return;
+  await api("files/" + folders[i].id, "PATCH", { name: name.trim() });
+  folders[i].name = name.trim();
+  renderFolders();
+  [...$("folders").children].forEach((el, k) => el.classList.toggle("sel", k === fIdx));
+  if (i === fIdx) $("info").textContent = `${name.trim()}  ·  ${iIdx + 1}/${images.length}`;
 }
 
 async function trashFolder(i, ev) {
